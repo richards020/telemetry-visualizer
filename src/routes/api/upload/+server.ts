@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { parseTelemetryCsv } from '$lib/server/parseTelemetry';
+import { setLatestRecords } from '$lib/server/telemetryStore';
 
 export const POST: RequestHandler = async ({ request }) => {
 	const formData = await request.formData();
@@ -13,12 +14,10 @@ export const POST: RequestHandler = async ({ request }) => {
 
 	const csvText = await csvFile.text();
 	const structure = JSON.parse(await structureFile.text());
-
 	const records = parseTelemetryCsv(csvText, structure);
+	setLatestRecords(records);
 
-	return json({
-		totalRecords: records.length,
-		sample: records.slice(0, 5)
-	});
+	const signalNames = [...new Set(records.map((r) => r.signalName))].sort();
+
+	return json({ totalRecords: records.length, signalNames });
 };
-

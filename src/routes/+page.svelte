@@ -1,91 +1,102 @@
-
-
 <script lang="ts">
+	import { onMount } from 'svelte';
+	import Chart from 'chart.js/auto';
+
 	let csvFile: File | null = $state(null);
 	let structureFile: File | null = $state(null);
 	let loading = $state(false);
-	let result: { totalRecords: number; sample: any[] } | null = $state(null);
 	let error: string | null = $state(null);
+	let signalNames: string[] = $state([]);
+	let selectedSignal: string = $state('');
+	let totalRecords = $state(0);
 
-
+	let canvasEl: HTMLCanvasElement;
+	let chart: Chart | null = null;
 
 	async function handleSubmit(e: Event) {
 		e.preventDefault();
-
 		if (!csvFile || !structureFile) {
 			error = 'Please select both files';
 			return;
 		}
 
-
 		loading = true;
 		error = null;
-		result = null;
 
 		const formData = new FormData();
 		formData.append('csv', csvFile);
 		formData.append('structure', structureFile);
 
 		try {
-			const res = await fetch('/api/upload', {
-				method: 'POST',
-				body: formData
-			});
-
-			if (!res.ok) {
-				const errBody = await res.json();
-				throw new Error(errBody.error ?? 'Upload failed');
-			}
-
-			result = await res.json();
+			const res = await fetch('/api/upload', { method: 'POST', body: formData });
+			if (!res.ok) throw new Error((await res.json()).error ?? 'Upload failed');
+			const data = await res.json();
+			totalRecords = data.totalRecords;
+			signalNames = data.signalNames;
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Something went wrong';
 		} finally {
 			loading = false;
 		}
 	}
+
+	async function loadSignal() {
+		if (!selectedSignal) return;
+		const res = await fetch(`/api/signal?name=${encodeURIComponent(selectedSignal)}`);
+		const data = await res.json();
+
+		if (chart) chart.destroy();
+		chart = new Chart(canvasEl, {
+			type: 'line',
+			data: {
+				datasets: [
+					{
+						label: `${selectedSignal} (${data.unit})`,
+						data: data.points,
+						borderWidth: 1,
+						pointRadius: 0
+					}
+				]
+			},
+			options: {
+				parsing: false,
+				scales: {
+					x: { type: 'linear', title: { display: true, text: 'timestamp (ms)' } },
+					y: { title: { display: true, text: data.unit || 'value' } }
+				}
+			}
+		});
+	}
 </script>
 
-
-
-
 <h1>Telemetry Visualizer</h1>
-
 
 <form onsubmit={handleSubmit}>
 	<div>
 		<label for="csv">CSV file</label>
-		<input
-			id="csv"
-			type="file"
-			accept=".csv"
-			onchange={(e) => (csvFile = e.currentTarget.files?.[0] ?? null)}
-		/>
+		<input id="csv" type="file" accept=".csv" onchange={(e) => (csvFile = e.currentTarget.files?.[0] ?? null)} />
 	</div>
-
 	<div>
 		<label for="structure">structure.json</label>
-		<input
-			id="structure"
-			type="file"
-			accept=".json"
-			onchange={(e) => (structureFile = e.currentTarget.files?.[0] ?? null)}
-		/>
+		<input id="structure" type="file" accept=".json" onchange={(e) => (structureFile = e.currentTarget.files?.[0] ?? null)} />
 	</div>
-
-
-
-	<button type="submit" disabled={loading}>
-		{loading ? 'Uploading...' : 'Upload'}
-	</button>
+	<button type="submit" disabled={loading}>{loading ? 'Uploading...' : 'Upload'}</button>
 </form>
 
-{#if error}
-	<p style="color: red">{error}</p>
-{/if}
+{#if error}<p style="color: red">{error}</p>{/if}
 
-{#if result}
-	<p>Parsed {result.totalRecords.toLocaleString()} records.</p>
-	<pre>{JSON.stringify(result.sample, null, 2)}</pre>
-{/if}
+{#if signalNames.length > 0}
+	<p>Parsed {totalRecords.toLocaleString()} records across {signalNames.length} signals.</p>
 
+	<label for="signal-select">Choose a signal to plot:</label>
+	<select id="signal-select" bind:value={selectedSignal} onchange={loadSignal}>
+		<option value="">-- select --</option>
+		{#each signalNames as name}
+			<option value={name}>{name}</option>
+		{/each}
+	</select>
+
+	<div style="max-width: 900px; margin-top: 1rem;">
+		<canvas bind:this={canvasEl}></canvas>
+	</div>
+{/if}
