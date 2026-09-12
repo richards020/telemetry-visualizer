@@ -1,18 +1,23 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import Chart from 'chart.js/auto';
 
+	// --- Form state: the two files the user picks to upload ---
 	let csvFile: File | null = $state(null);
 	let structureFile: File | null = $state(null);
 	let loading = $state(false);
 	let error: string | null = $state(null);
+
+	// --- Data returned after a successful upload ---
 	let signalNames: string[] = $state([]);
 	let selectedSignal: string = $state('');
 	let totalRecords = $state(0);
 
+	// --- Chart + analytics for whichever signal is currently selected ---
 	let canvasEl: HTMLCanvasElement;
 	let chart: Chart | null = null;
+	let analytics: any = $state(null); // holds either { type: 'state', transitions } or { type: 'numeric', stats }
 
+	// Handles the upload form submit: sends both files to /api/upload
 	async function handleSubmit(e: Event) {
 		e.preventDefault();
 		if (!csvFile || !structureFile) {
@@ -40,8 +45,12 @@
 		}
 	}
 
+	// Runs whenever the dropdown selection changes: fetches chart data AND analytics
+	// for the newly selected signal, then redraws the chart.
 	async function loadSignal() {
 		if (!selectedSignal) return;
+
+		// 1. Get the raw points for the line chart
 		const res = await fetch(`/api/signal?name=${encodeURIComponent(selectedSignal)}`);
 		const data = await res.json();
 
@@ -66,11 +75,16 @@
 				}
 			}
 		});
+
+		// 2. Get the analytics (state transitions OR numeric stats) for the same signal
+		const analyticsRes = await fetch(`/api/analytics?name=${encodeURIComponent(selectedSignal)}`);
+		analytics = await analyticsRes.json();
 	}
 </script>
 
 <h1>Telemetry Visualizer</h1>
 
+<!-- Upload form: pick the CSV + structure.json and send them to the server -->
 <form onsubmit={handleSubmit}>
 	<div>
 		<label for="csv">CSV file</label>
@@ -85,6 +99,7 @@
 
 {#if error}<p style="color: red">{error}</p>{/if}
 
+<!-- Once we have signal names back, show the dropdown + chart + analytics -->
 {#if signalNames.length > 0}
 	<p>Parsed {totalRecords.toLocaleString()} records across {signalNames.length} signals.</p>
 
@@ -99,4 +114,23 @@
 	<div style="max-width: 900px; margin-top: 1rem;">
 		<canvas bind:this={canvasEl}></canvas>
 	</div>
+
+	<!-- Analytics section: renders differently depending on what type came back -->
+	{#if analytics?.type === 'state'}
+		<h3>State changes for {selectedSignal}</h3>
+		<ul>
+			{#each analytics.transitions as t}
+				<li>t={t.timestamp}ms: {t.from ?? '(start)'} → {t.to}</li>
+			{/each}
+		</ul>
+	{:else if analytics?.type === 'numeric' && analytics.stats}
+		<h3>Stats for {selectedSignal}</h3>
+		<p>
+			Min: {analytics.stats.min.toFixed(2)} |
+			Max: {analytics.stats.max.toFixed(2)} |
+			Avg: {analytics.stats.avg.toFixed(2)} |
+			Readings: {analytics.stats.count.toLocaleString()}
+		</p>
+	{/if}
 {/if}
+
